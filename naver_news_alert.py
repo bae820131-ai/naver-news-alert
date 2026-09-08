@@ -33,9 +33,8 @@ KEYWORDS = [
     "스탁그랜트",
     "Stock Grant",
     "Stock-Grant",
-    "스톡옵션",
-    "NH투자"
-]
+    "스톡옵션"
+  ]
 
 # 검색 결과 중 이 시간(시간 단위) 이내에 나온 기사만 알림 대상으로 처리
 RECENT_HOURS = 1
