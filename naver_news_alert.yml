@@ -1,0 +1,42 @@
+name: Naver News Keyword Alert
+
+on:
+  schedule:
+    # GitHub Actions의 cron은 UTC 기준입니다. (UTC = KST - 9시간)
+    # 새벽 1시~5시(KST) = UTC 16시~19시 → 이 구간을 제외하고 30분마다 실행
+    # 즉 KST 05:00~24:59(=UTC 20~23,0~15)에는 30분마다 실행되고
+    # KST 01:00~04:59(=UTC 16~19)에는 실행되지 않음
+    - cron: "*/30 0-15,20-23 * * *"
+  workflow_dispatch: {}  # 수동 실행 버튼 활성화
+
+jobs:
+  run-alert:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 체크아웃
+        uses: actions/checkout@v4
+
+      - name: 파이썬 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 패키지 설치
+        run: pip install requests
+
+      - name: 뉴스 알림 스크립트 실행
+        env:
+          NAVER_CLIENT_ID: ${{ secrets.NAVER_CLIENT_ID }}
+          NAVER_CLIENT_SECRET: ${{ secrets.NAVER_CLIENT_SECRET }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python naver_news_alert.py
+
+      - name: 전송 기록 커밋 (중복 방지용)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add sent_links.json
+          git diff --staged --quiet || git commit -m "update sent_links.json"
+          git push
