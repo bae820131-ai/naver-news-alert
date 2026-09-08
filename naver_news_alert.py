@@ -157,7 +157,7 @@ def main():
 
         for item in items:
             link = item.get("originallink") or item.get("link")
-            if not link or link in sent_links:
+            if not link or link in new_sent_links:
                 continue
             if not is_recent(item.get("pubDate", "")):
                 continue
