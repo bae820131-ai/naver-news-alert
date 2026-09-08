@@ -26,15 +26,15 @@ from datetime import datetime, timedelta, timezone
 # 1) 여기에 원하는 키워드를 자유롭게 추가/삭제하세요.
 # ------------------------------------------------------------------
 KEYWORDS = [
-    "주식보상제도",
+    "주식보상",
     "RSA",
     "RSU",
     "스톡그랜트",
     "스탁그랜트",
     "Stock Grant",
     "Stock-Grant",
-    "스톡옵션"
-  ]
+    "스톡옵션",
+]
 
 # 검색 결과 중 이 시간(시간 단위) 이내에 나온 기사만 알림 대상으로 처리
 RECENT_HOURS = 1
@@ -94,6 +94,18 @@ def strip_html(text):
     )
 
 
+def normalize(text):
+    # 대소문자, 공백 차이를 무시하고 비교하기 위한 정규화
+    return "".join(text.lower().split())
+
+
+def contains_exact_keyword(keyword, title, description):
+    # 네이버 검색 API는 형태소 분석 기반이라 키워드가 실제로 안 들어있어도
+    # 관련 기사로 잡힐 수 있음 -> 제목/요약에 정확히 그 문자열이 있는지 재확인
+    combined = normalize(title + " " + description)
+    return normalize(keyword) in combined
+
+
 def is_recent(pub_date_str, hours=RECENT_HOURS):
     # pubDate 예: "Tue, 08 Sep 2026 10:00:00 +0900"
     try:
@@ -150,7 +162,15 @@ def main():
             if not is_recent(item.get("pubDate", "")):
                 continue
 
-            title = strip_html(item.get("title", ""))
+            raw_title = item.get("title", "")
+            raw_description = item.get("description", "")
+            title = strip_html(raw_title)
+            description = strip_html(raw_description)
+
+            # 제목/요약에 키워드 문자열이 실제로 없으면 건너뜀 (형태소 분석 오탐 방지)
+            if not contains_exact_keyword(keyword, title, description):
+                continue
+
             new_articles.append({"keyword": keyword, "title": title, "link": link})
             new_sent_links.add(link)
 
