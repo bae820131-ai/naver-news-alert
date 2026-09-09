@@ -36,6 +36,16 @@ KEYWORDS = [
     "스톡옵션",
 ]
 
+# ------------------------------------------------------------------
+# 1-1) RSA, RSU 등 IT/보안 분야에서도 쓰이는 모호한 키워드는
+#      아래 문맥 단어 중 하나라도 같이 나와야 알림 대상으로 인정합니다.
+#      (없으면 암호화/보안/기타 IT 기사로 보고 걸러냄)
+# ------------------------------------------------------------------
+CONTEXT_REQUIRED = {
+    "RSA": ["주식", "보상", "스톡", "임직원", "양도제한", "그랜트"],
+    "RSU": ["주식", "보상", "스톡", "임직원", "양도제한", "그랜트"],
+}
+
 # 검색 결과 중 이 시간(시간 단위) 이내에 나온 기사만 알림 대상으로 처리
 RECENT_HOURS = 1
 
@@ -106,6 +116,16 @@ def contains_exact_keyword(keyword, title, description):
     return normalize(keyword) in combined
 
 
+def passes_context_filter(keyword, title, description):
+    # RSA, RSU처럼 다른 분야(보안/IT 등)에서도 쓰이는 키워드는
+    # 문맥 단어가 같이 있어야 통과시킴. CONTEXT_REQUIRED에 없는 키워드는 그냥 통과.
+    required_words = CONTEXT_REQUIRED.get(keyword)
+    if not required_words:
+        return True
+    combined = normalize(title + " " + description)
+    return any(normalize(word) in combined for word in required_words)
+
+
 def is_recent(pub_date_str, hours=RECENT_HOURS):
     # pubDate 예: "Tue, 08 Sep 2026 10:00:00 +0900"
     try:
@@ -169,6 +189,10 @@ def main():
 
             # 제목/요약에 키워드 문자열이 실제로 없으면 건너뜀 (형태소 분석 오탐 방지)
             if not contains_exact_keyword(keyword, title, description):
+                continue
+
+            # RSA/RSU처럼 다른 분야와 겹치는 키워드는 문맥 단어 확인
+            if not passes_context_filter(keyword, title, description):
                 continue
 
             new_articles.append({"keyword": keyword, "title": title, "link": link})
