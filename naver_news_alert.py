@@ -19,6 +19,7 @@ Client ID/Secret은 네이버 클라우드 플랫폼(ncloud.com) 콘솔에서 �
 import os
 import json
 import time
+import difflib
 import requests
 from datetime import datetime, timedelta, timezone
 
@@ -49,6 +50,10 @@ CONTEXT_REQUIRED = {
 # 검색 결과 중 이 시간(시간 단위) 이내에 나온 기사만 알림 대상으로 처리
 RECENT_HOURS = 1
 
+# 제목 유사도가 이 값 이상이면 "같은 사건을 다룬 다른 언론사 기사"로 보고 건너뜀
+# (0~1 사이 값, 1에 가까울수록 완전히 똑같아야 중복으로 판단)
+TITLE_SIMILARITY_THRESHOLD = 0.72
+
 NAVER_CLIENT_ID = os.environ.get("NAVER_CLIENT_ID")
 NAVER_CLIENT_SECRET = os.environ.get("NAVER_CLIENT_SECRET")
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
@@ -62,16 +67,24 @@ NAVER_NEWS_URL = "https://naverapihub.apigw.ntruss.com/search/v1/news"
 KST = timezone(timedelta(hours=9))
 
 
-def load_sent_links():
-    if os.path.exists(SENT_LINKS_FILE):
-        with open(SENT_LINKS_FILE, "r", encoding="utf-8") as f:
-            return set(json.load(f))
-    return set()
+def load_sent_data():
+    """
+    이전 실행 기록을 읽어옵니다.
+    - 새 형식: [{"link": "...", "title": "..."}, ...]
+    - 구 형식(문자열 리스트)도 그대로 인식해서 title 없이 불러옵니다.
+    """
+    if not os.path.exists(SENT_LINKS_FILE):
+        return []
+    with open(SENT_LINKS_FILE, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    if data and isinstance(data[0], str):
+        return [{"link": link, "title": ""} for link in data]
+    return data
 
 
-def save_sent_links(links):
+def save_sent_data(items):
     # 파일이 무한정 커지지 않도록 최근 2000개만 보관
-    trimmed = list(links)[-2000:]
+    trimmed = items[-2000:]
     with open(SENT_LINKS_FILE, "w", encoding="utf-8") as f:
         json.dump(trimmed, f, ensure_ascii=False, indent=2)
 
@@ -126,6 +139,19 @@ def passes_context_filter(keyword, title, description):
     return any(normalize(word) in combined for word in required_words)
 
 
+def is_duplicate_title(title, existing_titles, threshold=TITLE_SIMILARITY_THRESHOLD):
+    # 언론사마다 제목이 조금씩 달라도 같은 사건이면 유사도가 높게 나옴
+    norm_title = normalize(title)
+    for existing in existing_titles:
+        norm_existing = normalize(existing)
+        if not norm_existing:
+            continue
+        ratio = difflib.SequenceMatcher(None, norm_title, norm_existing).ratio()
+        if ratio >= threshold:
+            return True
+    return False
+
+
 def is_recent(pub_date_str, hours=RECENT_HOURS):
     # pubDate 예: "Tue, 08 Sep 2026 10:00:00 +0900"
     try:
@@ -164,8 +190,13 @@ def main():
     if not (NAVER_CLIENT_ID and NAVER_CLIENT_SECRET):
         raise SystemExit("NAVER_CLIENT_ID / NAVER_CLIENT_SECRET 환경변수가 설정되지 않았습니다.")
 
-    sent_links = load_sent_links()
+    sent_data = load_sent_data()
+    sent_links = {item["link"] for item in sent_data}
+    # 최근 200개 정도의 제목만 유사도 비교에 사용 (전체 다 비교하면 느려짐)
+    recent_titles = [item.get("title", "") for item in sent_data[-200:] if item.get("title")]
+
     new_sent_links = set(sent_links)
+    new_titles_this_run = []  # 이번 실행에서 채택한 기사 제목들 (같은 실행 내 유사 제목 비교용)
     new_articles = []
 
     for keyword in KEYWORDS:
@@ -195,8 +226,14 @@ def main():
             if not passes_context_filter(keyword, title, description):
                 continue
 
+            # 이전에 보낸 기사 + 이번 실행에서 이미 채택한 기사와 제목이 비슷하면
+            # 다른 언론사의 같은 사건 보도로 보고 건너뜀
+            if is_duplicate_title(title, recent_titles + new_titles_this_run):
+                continue
+
             new_articles.append({"keyword": keyword, "title": title, "link": link})
             new_sent_links.add(link)
+            new_titles_this_run.append(title)
 
         time.sleep(0.2)  # 네이버 API 호출 간 살짝 텀
 
@@ -210,7 +247,10 @@ def main():
         send_slack(message)
         print(f"전송 완료: {message}")
 
-    save_sent_links(new_sent_links)
+    updated_data = sent_data + [
+        {"link": article["link"], "title": article["title"]} for article in new_articles
+    ]
+    save_sent_data(updated_data)
 
 
 if __name__ == "__main__":
