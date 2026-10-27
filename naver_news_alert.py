@@ -17,6 +17,7 @@ Client ID/Secret은 네이버 클라우드 플랫폼(ncloud.com) 콘솔에서 �
 """
 
 import os
+import re
 import json
 import time
 import difflib
@@ -46,6 +47,28 @@ CONTEXT_REQUIRED = {
     "RSA": ["주식", "보상", "스톡", "임직원", "양도제한", "그랜트"],
     "RSU": ["주식", "보상", "스톡", "임직원", "양도제한", "그랜트"],
 }
+
+# ------------------------------------------------------------------
+# 1-2) 해외기업 기사 제외
+#      제목/요약에 아래 패턴 중 하나라도 있으면 알림에서 뺍니다.
+#      (정규식입니다. 대소문자 구분 없음. 기업을 추가/삭제하려면 이 리스트를 수정하세요.)
+#      - "애플(?!리케이션)" 처럼 (?!...) 는 "애플리케이션" 같은 다른 단어를 오인하지 않게 하는 장치입니다.
+# ------------------------------------------------------------------
+OVERSEAS_EXCLUDE_PATTERNS = [
+    # 미국 빅테크/주요 기업
+    r"테슬라", r"애플(?!리케이션)", r"구글", r"알파벳", r"아마존", r"마이크로소프트",
+    r"메타(?!버스|데이터)", r"페이스북", r"엔비디아", r"넷플릭스", r"우버", r"에어비앤비",
+    r"스페이스X", r"오픈AI", r"앤트로픽", r"인텔(?!리)", r"퀄컴", r"브로드컴", r"\bAMD\b",
+    r"오라클", r"세일즈포스", r"스포티파이", r"핀터레스트", r"스트라이프", r"코인베이스",
+    r"로빈후드", r"팔란티어", r"디즈니", r"보잉", r"월마트", r"스타벅스",
+    # 중국/일본/기타 해외 기업
+    r"알리바바", r"텐센트", r"바이두", r"샤오미", r"화웨이", r"바이트댄스", r"틱톡",
+    r"BYD", r"비야디", r"도요타", r"소프트뱅크", r"소니", r"TSMC", r"ASML",
+    # 영문 표기
+    r"\btesla\b", r"\bapple\b", r"\bgoogle\b", r"\bamazon\b", r"\bmicrosoft\b",
+    r"\bmeta\b", r"\bnvidia\b", r"\bnetflix\b", r"\buber\b", r"\bopenai\b",
+]
+OVERSEAS_EXCLUDE_REGEX = re.compile("|".join(OVERSEAS_EXCLUDE_PATTERNS), re.IGNORECASE)
 
 # 검색 결과 중 이 시간(시간 단위) 이내에 나온 기사만 알림 대상으로 처리
 RECENT_HOURS = 1
@@ -139,6 +162,16 @@ def passes_context_filter(keyword, title, description):
     return any(normalize(word) in combined for word in required_words)
 
 
+def has_hangul(text):
+    # 제목에 한글이 하나도 없으면 중국어/영어 등 외국어 기사로 보고 제외
+    return re.search(r"[가-힣]", text) is not None
+
+
+def mentions_overseas_company(title, description):
+    # 제목/요약에 해외기업 이름이 나오면 해외기업 기사로 보고 제외
+    return OVERSEAS_EXCLUDE_REGEX.search(title + " " + description) is not None
+
+
 def is_duplicate_title(title, existing_titles, threshold=TITLE_SIMILARITY_THRESHOLD):
     # 언론사마다 제목이 조금씩 달라도 같은 사건이면 유사도가 높게 나옴
     norm_title = normalize(title)
@@ -224,6 +257,12 @@ def main():
 
             # RSA/RSU처럼 다른 분야와 겹치는 키워드는 문맥 단어 확인
             if not passes_context_filter(keyword, title, description):
+                continue
+
+            # 한글이 없는 외국어 기사, 해외기업 기사는 제외
+            if not has_hangul(title):
+                continue
+            if mentions_overseas_company(title, description):
                 continue
 
             # 이전에 보낸 기사 + 이번 실행에서 이미 채택한 기사와 제목이 비슷하면
